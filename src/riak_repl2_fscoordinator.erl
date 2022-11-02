@@ -1,3 +1,10 @@
+%% -------------------------------------------------------------------
+%%
+%% Copyright (c) 2012-2015 Basho Technologies
+%% Copyright (c) 2019-2022 Workday, Inc.
+%%
+%% -------------------------------------------------------------------
+
 %% @doc Coordinates full sync replication parallelism.  Uses 3
 %% `riak_repl' application environment values: `fullsync_on_connect',
 %% `max_fssource_cluster', and `max_fssource_node',
@@ -70,9 +77,7 @@
 }).
 
 -record(state, {
-    leader_node :: 'undefined' | node(),
-    leader_pid :: 'undefined' | node(),
-    other_cluster,
+    other_cluster :: string(),
     socket,
     transport,
     largest_n,
@@ -98,7 +103,8 @@
     fullsync_start_time = undefined,
     last_fullsync_duration = undefined,
     last_fullsync_completed = undefined,
-    stat_cache = #stat_cache{}
+    stat_cache = #stat_cache{},
+    endpoint :: {inet:ip_address(), inet:port_number()}
 }).
 
 -record(partition_info, {
@@ -253,14 +259,38 @@ connect_failed(_ClientProto, Reason, SourcePid) ->
 %% @hidden
 init(Cluster) ->
     process_flag(trap_exit, true),
+    case init_connection(#state{other_cluster = Cluster}) of
+        {ok, State} ->
+            _ = riak_repl_util:schedule_cluster_fullsync(Cluster),
+            {ok, refresh_stats(State)};
+        {stop, Error} ->
+            {stop, Error}
+    end.
+
+%% request that the riak_core connection framework creates a
+%% socket connection to the source cluster
+init_connection(#state{endpoint = Endpoint, other_cluster = Cluster} = _State) ->
     TcpOptions = [
         {keepalive, true},
         {nodelay, true},
         {packet, 4},
         {active, false}
     ],
+    ConnType = rt_repl,
     ClientSpec = {{fs_coordinate, [{1,0}]}, {TcpOptions, ?MODULE, self()}},
-    case riak_core_connection_mgr:connect({rt_repl, Cluster}, ClientSpec) of
+    ConnectRequest =
+        case Endpoint of
+            undefined ->
+                %% if there is not a previous connection then do not specify the endpoints
+                riak_core_connection_mgr:connect({ConnType, Cluster}, ClientSpec);
+            _ ->
+                %% if we already have an end point in state that means we're restarting
+                %% do not attempt reconnect to that node
+                {ok, R} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(Cluster),
+                Endpoints = [E || E <- R, E /= Endpoint],
+                riak_core_connection_mgr:connect({ConnType, Cluster}, ClientSpec, {use_only, Endpoints})
+        end,
+    case ConnectRequest of
         {ok, Ref} ->
             _ = riak_repl_util:schedule_cluster_fullsync(Cluster),
             {ok, refresh_stats(#state{other_cluster = Cluster, connection_ref = Ref})};
@@ -339,7 +369,7 @@ handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
 %% @hidden
-handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
+handle_cast({connected, Socket, Transport, Endpoint, _Proto}, State) ->
     ?LOG_INFO("Fullsync coordinator connected to ~p", [State#state.other_cluster]),
     SocketTag = riak_repl_util:generate_socket_tag("fs_coord", Transport, Socket),
     ?LOG_DEBUG("Keeping stats for " ++ SocketTag),
@@ -347,7 +377,7 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
                                        SocketTag}, Transport),
 
     Transport:setopts(Socket, [{active, once}]),
-    State2 = State#state{ socket = Socket, transport = Transport},
+    State2 = State#state{endpoint = Endpoint, socket = Socket, transport = Transport},
     case app_helper:get_env(riak_repl, fullsync_on_connect, true) orelse
         State#state.pending_fullsync of
         true ->
@@ -517,7 +547,8 @@ handle_info({'DOWN', Mon, process, Pid, Why}, #state{stat_cache = #stat_cache{wo
     StatCache2 = refresh_stats(StatCache1, State#state.running_sources),
     {noreply, State#state{stat_cache = StatCache2}};
 
-handle_info(_Info, State) ->
+handle_info(Info, State) ->
+    lager:warning("Unhandled info message ~p", [Info]),
     {noreply, State}.
 
 handle_abnormal_exit(ExitType, Pid, Cause, State) ->
@@ -752,6 +783,8 @@ pop_if_wait_time_elapsed(Partition, Moment, NewPurgatory, State) ->
 
 start_up_reqs(State, N) when N < 1 ->
     State;
+start_up_reqs(#state{socket = undefined} = State, _N) ->
+    State;
 start_up_reqs(State, N) ->
     case send_next_whereis_req(State) of
         {ok, State2} ->
@@ -789,16 +822,36 @@ send_next_whereis_req(State) ->
 
                 P when is_record(P, partition_info) ->
                     #partition_info{index = Pval} = P,
-                    #state{transport = Transport, socket = Socket, whereis_waiting = Waiting} = State,
+                    #state{other_cluster = Cluster, transport = Transport, socket = Socket, whereis_waiting = Waiting} = State,
                     Tref = erlang:send_after(?WAITING_TIMEOUT, self(), {Pval, whereis_timeout}),
                     PartitionInfo2 = P#partition_info{whereis_tref = Tref},
                     Waiting2 = [PartitionInfo2 | Waiting],
-                    {ok, {PeerIP, PeerPort}} = Transport:peername(Socket),
-                    ?LOG_DEBUG("Sending whereis request for partition ~p", [P]),
-                    Transport:send(Socket,
-                        term_to_binary({whereis, Pval, PeerIP, PeerPort})),
-                    {ok, State#state{partition_queue = Queue, whereis_waiting =
-                        Waiting2}}
+                    case Transport:peername(Socket) of
+                        {ok, {PeerIP, PeerPort}} ->
+                            ?LOG_DEBUG("Sending whereis request for partition ~p", [P]),
+                            Transport:send(
+                                Socket,
+                                term_to_binary({whereis, Pval, PeerIP, PeerPort})
+                            ),
+                            {ok, State#state{partition_queue = Queue, whereis_waiting = Waiting2}};
+                        {error, E} ->
+                            ?LOG_DEBUG("Fullsync coordinator socket peername failed with error ~p in ~p, whereis for partition ~p cancelled.", [E, Cluster, Pval]),
+                            case init_connection(State) of
+                                {ok, _NewState} = Response ->
+                                    Response;
+                                Error ->
+                                    ?LOG_DEBUG("Failed to re-connect when attempting to send whereis request with error ~p", [Error]),
+                                    error(Error)
+                            end;
+                        UnexpectedPeername ->
+                            ?FS_LOG_INFO(
+                                "fullsync coordinator socket peername returned an unexpected peername (~p) in cluster ~p.  "
+                                "The whereis for partition ~p cancelled.", 
+                                [UnexpectedPeername, Cluster, Pval], 
+                                State#state.other_cluster
+                            ),
+                            error(unexpected_peername)
+                    end
             end
     end.
 

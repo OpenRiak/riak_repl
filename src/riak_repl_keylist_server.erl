@@ -80,6 +80,8 @@
          diff_bloom/2,
          diff_bloom/3]).
 
+-include("riak_repl.hrl").
+
 -record(state, {
         sitename,
         socket,
@@ -122,6 +124,7 @@
 %% this threshold to compare it to the actual number of differences or an
 %% estimate of them.
 -define(KEY_LIST_THRESHOLD,(1024)).
+
 
 start_link(SiteName, Transport, Socket, WorkDir, Client, Proto) ->
     gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client, Proto], []).
@@ -624,8 +627,8 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
 
 %% gen_fsm callbacks
 
-handle_event(_Event, StateName, State) ->
-    ?LOG_DEBUG("Full-sync with site ~p; ignoring ~p", [State#state.sitename, _Event]),
+handle_event(Event, StateName, State) ->
+    ?LOG_DEBUG("Full-sync with site ~p; ignoring ~p", [State#state.sitename, Event]),
     {next_state, StateName, State}.
 
 handle_sync_event(status, _From, StateName, State) ->
@@ -751,7 +754,7 @@ wait_for_individual_partition(Partition, State=#state{work_dir=WorkDir}) ->
     %% client wants keylist for this partition
     TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
     KeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
-    {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
+    {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self(), State#state.sitename),
     {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
                                                               Partition,
                                                               KeyListFn),
@@ -826,7 +829,7 @@ kl_eof(#state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
     ?TRACE(?LOG_INFO("Full-sync with site ~p; calculating ~p differences for ~p",
                       [State#state.sitename, NumDKeys, State#state.partition])),
-    {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
+    {ok, Pid} = riak_repl_fullsync_helper:start_link(self(), State#state.sitename),
 
     %% check capability of all nodes for bloom fold ability.
     %% Since we are the leader, the fact that we have this

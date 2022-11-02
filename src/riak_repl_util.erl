@@ -143,6 +143,7 @@ do_repl_put(Object, B, true) ->
     K = riak_object:key(Object),
     case repl_helper_recv(Object) of
         ok ->
+            riak_repl_stats:increment_repl_puts(),
             ReqId = erlang:phash2({self(), os:timestamp()}),
             Opts = [asis, disable_hooks, {update_last_modified, false}],
 
@@ -167,6 +168,7 @@ do_repl_put(Object, B, true) ->
             case riak_kv_util:is_x_deleted(Object) of
                 true ->
                     ?LOG_DEBUG("Incoming deleted obj ~p/~p", [B, K]),
+                    riak_repl_stats:increment_repl_reaps(),
                     _ = reap(ReqId, B, K),
                     %% block waiting for response
                     wait_for_response(ReqId, "reap");

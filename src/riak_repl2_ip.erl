@@ -1,14 +1,21 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl2_ip).
--export([get_matching_address/2, determine_netmask/2, mask_address/2,
-        maybe_apply_nat_map/3, apply_reverse_nat_map/3]).
+-export([endpoint_to_string/1, get_matching_address/2,
+         determine_netmask/2, mask_address/2,
+         maybe_apply_nat_map/3, apply_reverse_nat_map/3]).
 
 -include_lib("kernel/include/logger.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+
+%% endpoint as given by inet:peername/1.
+endpoint_to_string({IP, Port}) when is_tuple(IP) ->
+    inet:ntoa(IP) ++ ":" ++ integer_to_list(Port);
+endpoint_to_string({IP, Port}) when is_list(IP) ->
+    IP ++ ":" ++ integer_to_list(Port).
 
 %% @doc Given the result of `inet:getifaddrs()' and an IP a client has
 %%      connected to, attempt to determine the appropriate subnet mask.  If

@@ -129,3 +129,24 @@
 -define(LONG_TIMEOUT, 120*1000).
 
 -define(V2REPLDEP, "DEPRECATION NOTICE: The replication protocol you are currently using in this cluster has been deprecated and will be unsupported and removed some time after the Riak Enterprise 2.1 release. Please upgrade to the latest replication protocol as soon as possible. If you need assistance migrating contact Basho Client Services or follow the instructions in our documentation ( http://docs.basho.com/riakee/latest/cookbooks/Multi-Data-Center-Replication-UpgradeV2toV3/ ).").
+
+%%
+%% These macros provide custom log formatting for replication so that
+%% logs with information about source or skink cluster names have
+%% consistent naming and can be more easily searched through logs.
+%% 
+
+-define(
+    FS_LOG_INFO(Fmt, Args, Clustername),
+    lager:info("Fullsync with site ~s; " ++ Fmt, [Clustername | Args])
+).
+
+-define(
+    FS_LOG_WARNING(Fmt, Args, Clustername),
+    lager:warning("Fullsync with site ~s; " ++ Fmt, [Clustername | Args])
+).
+
+-define(
+    FS_LOG_ERROR(Fmt, Args, Clustername),
+    lager:error("Fullsync with site ~s; " ++ Fmt, [Clustername | Args])
+).

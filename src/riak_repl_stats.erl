@@ -35,6 +35,8 @@
          objects_forwarded/0,
          elections_elected/0,
          elections_leader_changed/0,
+         increment_repl_puts/0,
+         increment_repl_reaps/0,
          register_stats/0,
          get_stats/0,
          produce_stats/0,
@@ -116,6 +118,12 @@ aae_segments_requested() ->
 
 keys_hashes_returned(Length) ->
     increment_counter(keys_hashes_returned, Length).
+
+increment_repl_puts() ->
+    increment_counter(repl_puts).
+
+increment_repl_reaps() ->
+    increment_counter(repl_reaps).
 
 %% If any source errors are detected, write a file out to persist this status
 %% across restarts
@@ -211,6 +219,8 @@ stats() ->
      {objects_forwarded, counter},
      {elections_elected, counter},
      {elections_leader_changed, counter},
+     {repl_puts, counter},
+     {repl_reaps, counter},
      {client_rx_kbps, history},
      {client_tx_kbps, history},
      {server_rx_kbps, history},

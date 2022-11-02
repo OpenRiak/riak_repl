@@ -57,7 +57,9 @@
         work_dir = undefined,
         strategy = keylist :: keylist | aae,
         proto,
-        ver              % highest common wire protocol in common with fs source
+        ver,             % highest common wire protocol in common with fs source
+        %% IP string of the socket we're connected to, for debug logging
+        peername_str = ""
     }).
 
 start_link(Socket, Transport, Proto, Props) ->
@@ -95,6 +97,16 @@ legacy_status(Pid, Timeout) ->
 %% gen server
 
 init([Socket, Transport, OKProto, Props]) ->
+    %% the peername is just for logging, so do not fail if
+    %% an error is returned, capabilty negotiation will handle
+    %% it and clean up
+    PeernameStr =
+        case Transport:peername(Socket) of
+            {ok, {IP, _}} when is_tuple(IP) ->
+                inet:ntoa(IP);
+            _ ->
+                "unknown"
+        end,
     %% TODO: remove annoying 'ok' from service mgr proto
     {ok, Proto} = OKProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
@@ -106,7 +118,7 @@ init([Socket, Transport, OKProto, Props]) ->
 
     Cluster = proplists:get_value(clustername, Props),
     ?LOG_DEBUG("fullsync connection (ver ~p) from cluster ~p", [Ver, Cluster]),
-    {ok, #state{proto=Proto, socket=Socket, transport=Transport, cluster=Cluster, ver=Ver}}.
+    {ok, #state{proto=Proto, socket=Socket, transport=Transport, cluster=Cluster, ver=Ver, peername_str=PeernameStr}}.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                                                socket=Socket, strategy=Strategy}) ->
@@ -172,24 +184,30 @@ handle_info(init_ack, State=#state{socket=Socket,
 
     %% possibly exchange fullsync capabilities with the remote
     OurCaps = decide_our_caps(CommonMajor),
-    TheirCaps = maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport),
-    Strategy = decide_common_strategy(OurCaps, TheirCaps),
-
-    case Strategy of
-        keylist ->
-            %% Keylist server strategy
-            Transport:setopts(Socket, [{active, once}]),
-            {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
-            {ok, FullsyncWorker} = riak_repl_keylist_client:start_link(Cluster, Transport,
-                                                                       Socket, WorkDir),
-            {noreply, State#state{cluster=Cluster, fullsync_worker=FullsyncWorker, work_dir=WorkDir,
-                                  strategy=keylist}};
-        aae ->
-            %% AAE strategy
-            {ok, FullsyncWorker} = riak_repl_aae_sink:start_link(Cluster, Transport, Socket, self()),
-            ok = Transport:controlling_process(Socket, FullsyncWorker),
-            riak_repl_aae_sink:init_sync(FullsyncWorker),
-            {noreply, State#state{cluster=Cluster, fullsync_worker=FullsyncWorker, strategy=aae}}
+    case maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport) of
+        {ok, TheirCaps} ->
+            case decide_common_strategy(OurCaps, TheirCaps) of
+                keylist ->
+                    %% Keylist server strategy
+                    Transport:setopts(Socket, [{active, once}]),
+                    {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
+                    {ok, FullsyncWorker} = riak_repl_keylist_client:start_link(Cluster, Transport,
+                                                                               Socket, WorkDir),
+                    {noreply, State#state{cluster=Cluster, fullsync_worker=FullsyncWorker, work_dir=WorkDir,
+                                          strategy=keylist}};
+                aae ->
+                    %% AAE strategy
+                    {ok, FullsyncWorker} = riak_repl_aae_sink:start_link(Cluster, Transport, Socket, self()),
+                    ok = Transport:controlling_process(Socket, FullsyncWorker),
+                    riak_repl_aae_sink:init_sync(FullsyncWorker),
+                    {noreply, State#state{cluster=Cluster, fullsync_worker=FullsyncWorker, strategy=aae}}
+            end;
+        {error, Reason} ->
+            ?FS_LOG_WARNING(
+                "Socket error '~p' to '~s' while fs sink was attempting to exchange capabilities, stopping.",
+                [Reason, State#state.peername_str], State#state.cluster
+            ),
+            {stop, {shutdown, {tcp_error, Reason}}, State}
     end;
 handle_info(_Msg, State) ->
     {noreply, State}.
@@ -244,16 +262,14 @@ decide_our_caps(CommonMajor) ->
 %% Depending on the protocol version number, send our capabilities
 %% as a list of properties, in binary.
 maybe_exchange_caps(1, _Caps, _Socket, _Transport) ->
-    [];
+    {ok, []};
 maybe_exchange_caps(_, Caps, Socket, Transport) ->
     Transport:send(Socket, term_to_binary(Caps)),
     case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
         {ok, Data} ->
-            binary_to_term(Data);
-        {Error, Socket} ->
-            throw(Error);
-        {Error, Socket, Reason} ->
-            throw({Error, Reason})
+            {ok, binary_to_term(Data)};
+        {error,_} = Error ->
+            Error
     end.
 
 

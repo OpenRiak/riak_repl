@@ -208,7 +208,11 @@ handle_sync_event(_Req, _From, StateName, State) ->
 handle_event(_Req, StateName, State) ->
     {next_state, StateName, State}.
 
-handle_info({_Transport, Socket, Data}, wait_for_capabilities, State = #state{socket = Socket}) ->
+handle_info(
+    {_Transport, Socket, Data},
+    wait_for_capabilities,
+    #state{socket = Socket} = State
+) ->
     case binary_to_term(Data) of
         % 'Tis better to check this a fail than hope the future is always
         % compatible.
@@ -230,19 +234,33 @@ handle_info({_Transport, Socket, Data}, wait_for_capabilities, State = #state{so
             {stop, {invalid_response, Else}, State}
     end;
 
-handle_info({_TransTag, Socket, Data}, wait_for_protocol, State = #state{socket = Socket}) ->
+handle_info(
+    {_TransTag, Socket, Data},
+    wait_for_protocol,
+    #state{ip = IP, port = Port, socket = Socket} = State
+) ->
     case binary_to_term(Data) of
         {ok, {ProtoName, {CommonMajor, RemoteMinor, LocalMinor}}} ->
             #state{transport = Transport, mod = Module, mod_args = ModArgs} = State,
             IpPort = {State#state.ip, State#state.port},
             NegotiatedProto = {ProtoName, {CommonMajor, LocalMinor}, {CommonMajor, RemoteMinor}},
             _ = Transport:setopts(Socket, State#state.socket_opts),
-            _ModStarted = Module:connected(Socket,
-                                           Transport,
-                                           IpPort,
-                                           NegotiatedProto,
-                                           ModArgs,
-                                           State#state.remote_capabilities),
+            try
+                _ModStarted = Module:connected(Socket,
+                                               Transport,
+                                               IpPort,
+                                               NegotiatedProto,
+                                               ModArgs,
+                                               State#state.remote_capabilities)
+            catch
+                _:{noproc,_} ->
+                    %% handle noproc errors, thrown by gen_server:call/2 when the pid has already terminated
+                    %% to prevent a crash report and messy logs being written unnecessarily.
+                    EndpointString = riak_repl2_ip:endpoint_to_string({IP, Port}),
+                    lager:error("Connection process ~p to endpoint ~s with behaviour ~s terminated before it "
+                                "could take control of the port. ",
+                                [ModArgs, EndpointString, Module])
+            end,
             {stop, normal, State};
         Else ->
             ?LOG_WARNING("Invalid version returned: ~p", [Else]),

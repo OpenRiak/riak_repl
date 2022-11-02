@@ -618,7 +618,8 @@ deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
         ok = DeliverFun(QEntry2),
         C#c{cseq = Seq, deliver = undefined, delivered = true, skips = 0}
     catch
-        _:_ ->
+        _:Reason ->
+            lager:error("Delivering rtq item failed with error: ~p", [Reason]),
             riak_repl_stats:rt_source_errors(),
             %% do not advance head so it will be delivered again
             C#c{errs = C#c.errs + 1, deliver = undefined}

@@ -49,6 +49,14 @@
                      need_vclocks = true,
                      errors = []}).
 
+-record(keylist_fold_rec, {
+    pid,
+    non_repl_keys = 0,
+    count = 0,
+    total_keys = 0,
+    has_total = true
+}).
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
@@ -111,21 +119,13 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
             Worker = fun() ->
                     %% Spend as little time on the vnode as possible,
                     %% accept there could be a potentially huge message queue
-                    Req = case riak_core_capability:get({riak_repl, bloom_fold}, false) of
-                        true ->
-                            riak_core_util:make_fold_req(fun ?MODULE:keylist_fold/3,
-                                                         {Self, 0, 0},
-                                                         false,
-                                                         [{iterator_refresh,
-                                                                 true}]);
-                        false ->
-                            %% use old accumulator without the total
-                            riak_core_util:make_fold_req(fun ?MODULE:keylist_fold/3,
-                                                         {Self, 0},
-                                                         false,
-                                                         [{iterator_refresh,
-                                                                 true}])
-                    end,
+                    HasBloomFold = riak_core_capability:get({riak_repl, bloom_fold}, false),
+                    Req = riak_core_util:make_fold_req(
+                        fun ?MODULE:keylist_fold/3,
+                        create_vnode_fold_accumulator(Self, HasBloomFold),
+                        false,
+                        [{iterator_refresh, true}]
+                    ),
                     try riak_core_vnode_master:command_return_vnode(
                             {Partition, OwnerNode},
                             Req,
@@ -134,6 +134,13 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
                         {ok, VNodePid} ->
                             MonRef = erlang:monitor(process, VNodePid),
                             receive
+                                {FoldRef, #keylist_fold_rec{pid=Self, total_keys=TotalKeys, non_repl_keys=NonReplKeys}} ->
+                                    ?FS_LOG_INFO(
+                                        "Skipped ~p non-replicated keys (out of ~p total scanned keys) when building keylist for partition ~p", 
+                                        [NonReplKeys, TotalKeys + NonReplKeys, Partition], 
+                                        State#state.remote_site_name
+                                    ),
+                                    riak_core_gen_server:cast(Self, {kl_finish, TotalKeys});
                                 {FoldRef, {Self, _}} ->
                                     %% total is 0, sorry
                                     riak_core_gen_server:cast(Self,
@@ -433,4 +440,86 @@ keylist_fold({B,Key}=K, V, {MPid, Count}) ->
         end
     catch _:_ ->
             {MPid, Count}
+    end;    
+keylist_fold({B,Key}=K, V, Accum) ->
+    %% TODO change to map when we stop supporting Riak versions based on OTP-16
+    #keylist_fold_rec{
+        pid = MPid,
+        non_repl_keys = NonReplKeys,
+        has_total = HasTotal,
+        total_keys = TotalKeys,
+        count = Count
+    } = Accum,
+    case is_fullsync_replicated(K) of
+        true ->
+            try
+                H = hash_object(B,Key,V),
+                Bin = term_to_binary({pack_key(K), H}),
+                %% write key/value hash to file
+                riak_core_gen_server:cast(MPid, {keylist, Bin}),
+                NewTotal = case HasTotal of
+                    true ->
+                        TotalKeys + 1;
+                    _ ->
+                        %% legacy support for the 2-tuple accumulator in 1.2.0 and earlier
+                        TotalKeys
+                end,
+                case Count of
+                    100 ->
+                        %% send keylist_ack to "self" every 100 key/value hashes
+                        %% TODO: Why?  The call just returns ok.  What is this call doing,
+                        %% other than bothering the helper?
+                        ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
+                        Accum#keylist_fold_rec{count = 0, total_keys = NewTotal};
+                    _ ->
+                        Accum#keylist_fold_rec{count = Count + 1, total_keys = NewTotal}
+                end
+            catch _:_ ->
+                    Accum
+            end;
+        _ ->
+            Accum#keylist_fold_rec{non_repl_keys = NonReplKeys + 1}
+    end.
+
+%% @private
+create_vnode_fold_accumulator(MPid, HasBloomFold) ->
+    case riak_core_capability:get({riak_repl, fs_kl_vnode_fold_accum_type}, raw_tuple) of
+        keylist_fold_rec ->
+            %% structured accumulator.  Note that we can't (yet) use maps
+            %% until ew drop support for Riak 2.0.
+            #keylist_fold_rec{pid=MPid, has_total=HasBloomFold};
+        raw_tuple ->
+            %% legacy fold accumulator(s)
+            case HasBloomFold of
+                true ->
+                    {MPid, 0, 0};
+                _ ->
+                    {MPid, 0}
+            end
+    end.
+
+%%
+%% MAINTENANCE NOTE: Why pass in the key to this function, if we are not using it?
+%% The answer is that we are using in the wd_repl_filter system test to track which BKeys
+%% have been replicated and which have not been, using intercepts.  This violates the
+%% principle, "Test the interface, not the implementation", but this seems to be the
+%% best option, given the alternatives.
+%% 
+
+%% @private
+is_fullsync_replicated({BucketName, Key}) when is_binary(BucketName) ->
+    is_fullsync_replicated({{<<"default">>, BucketName}, Key});
+is_fullsync_replicated({{BucketType, BucketName} = Bucket, _Key}) when is_binary(BucketType) andalso is_binary(BucketName) ->
+    case riak_core_ring_manager:get_my_ring() of
+        {ok, Ring} ->
+            BucketProps = riak_core_bucket:get_bucket(Bucket, Ring),
+            %% N.B., repl bucket property can be: 
+            %%     * true (realtime and fullsync replication);
+            %%     * false (no replication);
+            %%     * realtime (only realtime replication); or 
+            %%     * fullsync (only fullysnc replication).
+            ReplProperty = proplists:get_value(repl, BucketProps, true),
+            ReplProperty =:= true orelse ReplProperty =:= fullsync;
+        _ ->
+            error(fail_to_obtain_ring)
     end.

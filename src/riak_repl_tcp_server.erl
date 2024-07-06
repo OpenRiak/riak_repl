@@ -346,7 +346,7 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
         OurNode ->
             _ = erlang:cancel_timer(State#state.election_timeout),
             %% are we configured to upgrade to ssl?
-            case {riak_repl_util:maybe_use_ssl(), Transport:name()} of
+            case {riak_repl_util:maybe_server_use_ssl(), Transport:name()} of
                 {B, T} when B == false; T == ssl ->
                     %% if there's no valid ssl config or we've already
                     %% upgraded

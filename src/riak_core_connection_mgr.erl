@@ -433,32 +433,39 @@ disconnect_from_target(Target, State = #state{pending = Pending}) ->
         Req ->
             case get_cancellation_interval() of
                 undefined ->
-                    ?LOG_WARNING("Cancelled connection ~p will not be removed because
-                        cm_cancellation_interval is set to undefined", [Req#req.target]);
+                    ?LOG_WARNING(
+                        "Cancelled connection ~p will not be removed because"
+                        "cm_cancellation_interval is set to undefined",
+                        [Req#req.target]
+                    );
                 Interval when is_integer(Interval) ->
-                    erlang:send_after(Interval,self(),{remove_cancelled_connection,Req#req.ref});
+                    erlang:send_after(
+                        Interval,
+                        self(),
+                        {remove_cancelled_connection, Req}
+                    );
                 Error ->
-                    ?LOG_ERROR("Unsupported cm_cancellation_interval: ~p", [Error])
+                    ?LOG_ERROR(
+                        "Unsupported cm_cancellation_interval: ~p",
+                        [Error]
+                    )
             end,
             %% The helper process will discover the cancellation when it asks if it
             %% should connect to an endpoint.
-            State#state{pending = lists:keystore(Req#req.ref, #req.ref, Pending,
-                                                 Req#req{state = cancelled})}
+            State#state{
+                pending =
+                    lists:keystore(
+                        Req#req.ref,
+                        #req.ref,
+                        Pending,
+                        Req#req{state = cancelled}
+                    )
+                }
     end.
 
 %% @doc remove pending connection from state for supplied Ref.
-remove_cancelled_connection(Ref, State = #state{pending = Pending}) ->
-    case lists:keytake(Ref, #req.ref, Pending) of
-        false ->
-            State;
-        {value, Req, Pending2} ->
-            case Req#req.state of
-                cancelled ->
-                    State#state{pending=Pending2};
-                _ ->
-                    State
-            end
-    end.
+remove_cancelled_connection(Req, State) ->
+    fail_request(cancelled, Req, State).
 
 %% schedule a retry to occur after Interval milliseconds.
 %% do not clear the pid from pending. the exit handler will do that.

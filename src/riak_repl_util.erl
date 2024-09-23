@@ -30,6 +30,7 @@
          normalize_ip/1,
          format_socketaddrs/2,
          maybe_use_ssl/0,
+         maybe_server_use_ssl/0,
          upgrade_client_to_ssl/1,
          choose_strategy/2,
          strategy_module/2,
@@ -471,12 +472,34 @@ validate_ssl_config(true, [{cacerts, CACerts}|Rest]) ->
 validate_ssl_config(true, [_|Rest]) ->
     validate_ssl_config(true, Rest).
 
+client_only_options() ->
+    [server_name_indication].
+
+server_only_options() ->
+    [fail_if_no_peer_cert].
+    
+deduct_options(StandardOptions, SpecificOptions) ->
+    lists:foldl(
+        fun(K, CfgAcc) -> 
+            lists:keydelete(K, 1, CfgAcc)
+        end,
+        StandardOptions,
+        SpecificOptions).
+
 upgrade_client_to_ssl(Socket) ->
     case maybe_use_ssl() of
         false ->
             {error, no_ssl_config};
         Config ->
-            ssl:connect(Socket, Config)
+            ssl:connect(Socket, deduct_options(Config, server_only_options()))
+    end.
+
+maybe_server_use_ssl() ->
+    case maybe_use_ssl() of
+        false ->
+            false;
+        Config ->
+            deduct_options(Config, client_only_options())
     end.
 
 load_certs(undefined) ->

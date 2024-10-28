@@ -1,6 +1,8 @@
 riak_repl
 =========
 
+![Riak Repl OpenRiak Status](https://github.com/OpenRiak/riak_repl/actions/workflows/erlang.yml/badge.svg?branch=openriak-3.2)
+
 Riak MDC Replication
 
 --- 

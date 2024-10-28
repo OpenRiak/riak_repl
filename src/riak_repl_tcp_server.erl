@@ -30,7 +30,7 @@
                 {gen_fsm, sync_send_all_state_event, 2}]}).
 
 %% API
--export([start_link/4, set_socket/2, send/3, status/1, status/2]).
+-export([start_link/3, set_socket/2, send/3, status/1, status/2]).
 -export([start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
         resume_fullsync/1, handle_peerinfo/3, make_state/6]).
 
@@ -63,8 +63,8 @@ make_state(Sitename, Transport, Socket, MyPI, WorkDir, Client) ->
     #state{sitename=Sitename, socket=Socket, transport=Transport, my_pi=MyPI,
            work_dir=WorkDir, client=Client}.
 
-start_link(Listener, Socket, Transport, _Opts) ->
-    gen_server:start_link(?MODULE, [Listener, Socket, Transport], []).
+start_link(Listener, Transport, _Opts) ->
+    gen_server:start_link(?MODULE, [Listener, Transport], []).
 
 set_socket(Pid, Socket) ->
     gen_server:call(Pid, {set_socket, Socket}, ?LONG_TIMEOUT).
@@ -87,8 +87,9 @@ status(Pid) ->
 status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
-init([Listener, Socket, Transport]) ->
+init([Listener, Transport]) ->
     self() ! init_ack,
+    {ok, Socket} = ranch:handshake(Listener),
     {ok, #state{socket=Socket, transport=Transport, listener=Listener}}.
 
 handle_call(start_fullsync, _From, #state{fullsync_worker=FSW,

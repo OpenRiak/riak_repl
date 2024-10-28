@@ -16,13 +16,15 @@ start_listener(Listener = #repl_listener{listen_addr={IP, Port}}) ->
             ?LOG_INFO("Starting replication listener on ~s:~p",
                 [IP, Port]),
             {ok, RawAddress} = inet_parse:address(IP),
-            ranch:start_listener(Listener,
-                                    ranch_tcp,
-                                    [{ip, RawAddress},
-                                        {port, Port},
-                                        {num_acceptors, 10}],
-                                    riak_repl_tcp_server,
-                                    []);
+            ranch:start_listener(
+                Listener,
+                ranch_tcp,
+                #{
+                    socket_opts => [{ip, RawAddress}, {port, Port}],
+                    num_acceptors => 10
+                },
+                riak_repl_tcp_server,
+                []);
         _ ->
             ?LOG_ERROR("Cannot start replication listener "
                 "on ~s:~p - invalid address.",

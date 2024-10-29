@@ -89,8 +89,7 @@ status(Pid, Timeout) ->
 
 init([Listener, Transport]) ->
     self() ! init_ack,
-    {ok, Socket} = ranch:handshake(Listener),
-    {ok, #state{socket=Socket, transport=Transport, listener=Listener}}.
+    {ok, #state{transport=Transport, listener=Listener}}.
 
 handle_call(start_fullsync, _From, #state{fullsync_worker=FSW,
         fullsync_strategy=Mod} = State) ->
@@ -174,28 +173,34 @@ handle_info({Proto, Socket, Data},
         _ ->
             Reply
     end;
-handle_info(init_ack, State=#state{transport=Transport, socket=Socket}) ->
-    %% acknowledge the change of socket ownership
-    {ok, _} = ranch:handshake(State#state.listener),
-    ok = Transport:setopts(Socket, [
-            binary,
-            {keepalive, true},
-            {nodelay, true},
-            {packet, 4},
-            {reuseaddr, true},
-            {active, false}]),
+handle_info(init_ack, State=#state{transport=Transport, listener=Listener}) ->
+    {ok, Socket} = ranch:handshake(Listener),
+    ok =
+        Transport:setopts(
+            Socket,
+            [
+                binary,
+                {keepalive, true},
+                {nodelay, true},
+                {packet, 4},
+                {reuseaddr, true},
+                {active, false}
+            ]
+        ),
     case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
         {ok, SiteNameBin} ->
             SiteName = binary_to_list(SiteNameBin),
             ok = riak_repl_util:configure_socket(Transport, Socket),
             self() ! send_peerinfo,
             Timeout = erlang:send_after(?ELECTION_TIMEOUT, self(), election_timeout),
-            {noreply, State#state{sitename=SiteName, election_timeout=Timeout}};
+            {noreply, State#state{sitename=SiteName, election_timeout=Timeout, socket=Socket}};
         {error, Reason} ->
             riak_repl_stats:server_connect_errors(),
-            %% debug to avoid DOS logging
-            ?LOG_DEBUG("Failed to receive site name banner from replication"
-                "client: ~p", [Reason]),
+            ?LOG_DEBUG(
+                "Failed to receive site name banner from replication"
+                "client: ~p",
+                [Reason]
+            ),
             {stop, normal, State}
     end;
 handle_info(send_peerinfo, State) ->

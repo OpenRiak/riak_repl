@@ -65,6 +65,7 @@ close_all_connections() ->
         server_pids()].
 
 server_pids() ->
+    %% PREVIOUS NOTE
     %%%%%%%%
     %% NOTE:
     %% This is needed because Ranch doesn't directly expose child PID's.
@@ -72,7 +73,22 @@ server_pids() ->
     %% future if Ranch is upgraded. Ideally, this code should be moved into
     %% Ranch. Please check for Ranch updates!
     %%%%%%%%
-    [Pid2 ||
-        {{ranch_listener_sup, _}, Pid, _Type, _Modules} <- supervisor:which_children(ranch_sup), is_pid(Pid),
-        {ranch_conns_sup,Pid1,_,_} <- supervisor:which_children(Pid),
-        {_,Pid2,_,_} <- supervisor:which_children(Pid1)].
+    %% NEW NOTE:
+    %% The previous bespoke crawling of the supervision tree was broken by an
+    %% upgrade to ranch - where the sup_sup supervisor was introduced.
+    %% 
+    %% There had existed ranch:procs/2 previously (introduced in 1.3.1), but
+    %% this was after this function was introduced - so this is presumably the
+    %% future updated that had been anticipated.  The original code was written
+    %% for Ranch 0.4 or earlier.
+    %% 
+    %% There is some doubt here though - is it just connections (not
+    %% associations), and for just this supervisor?  Bit if guess work involved
+    %% in deciding this is what was always meant
+    %% 
+    %%%%%%%%
+    [ReplListener] = 
+        [{repl_listener, N, L} ||
+            {{ranch_listener_sup, {repl_listener, N, L}}, _P, _T, _Ms}
+                <- supervisor:which_children(ranch_sup)],
+    ranch:procs(ReplListener, connections).

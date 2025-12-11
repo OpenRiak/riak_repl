@@ -31,7 +31,7 @@ murdering_test_() ->
         meck:expect(riak_core_node_watcher, nodes, fun(_) ->
             [node()]
         end),
-        application:start(ranch),
+        application:ensure_all_started(ranch),
         application:set_env(riak_repl, data_root, "."),
         {ok, _Eventer} = riak_core_ring_events:start_link(),
         {ok, _RingMgr} = riak_core_ring_manager:start_link(test),

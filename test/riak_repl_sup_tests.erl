@@ -27,7 +27,7 @@ can_start_test_() ->
               meck:expect(riak_core_node_watcher, nodes, fun(_) -> [node()] end),
 
               %% needed by repl itself
-              application:start(ranch),
+              application:ensure_all_started(ranch),
               application:set_env(riak_repl, data_root, ".")
       end,
       fun(_) ->

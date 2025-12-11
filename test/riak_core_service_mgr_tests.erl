@@ -52,7 +52,7 @@ service_test_() ->
        fun() ->
                riak_core_ring_events:start_link(),
                riak_core_ring_manager:start_link(test),
-               ok = application:start(ranch),
+               {ok, _} = application:ensure_all_started(ranch),
                {ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR),
                ok
        end,

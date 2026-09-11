@@ -14,7 +14,7 @@
 -include_lib("kernel/include/logger.hrl").
 
 %% API
--export([start_link/1,
+-export([start_link/2,
          stop/1,
          make_keylist/3,
          diff/4,
@@ -37,7 +37,8 @@
                 kl_total,
                 filename,
                 buf=[],
-                size=0}).
+                size=0,
+                remote_site_name::string()}).
 
 -record(diff_state, {fsm,
                      ref,
@@ -53,8 +54,8 @@
 %% Public API
 %% ===================================================================
 
-start_link(OwnerFsm) ->
-    riak_core_gen_server:start_link(?MODULE, [OwnerFsm], []).
+start_link(OwnerFsm, RemoteSiteName) when is_pid(OwnerFsm) ->
+    riak_core_gen_server:start_link(?MODULE, [OwnerFsm, RemoteSiteName], []).
 
 stop(Pid) ->
     riak_core_gen_server:call(Pid, stop, infinity).
@@ -81,9 +82,9 @@ diff_stream(Pid, Partition, TheirFn, OurFn, Count) ->
 %% gen_server callbacks
 %% ====================================================================
 
-init([OwnerFsm]) ->
+init([OwnerFsm, RemoteSiteName]) ->
     process_flag(trap_exit, true),
-    {ok, #state{owner_fsm = OwnerFsm}}.
+    {ok, #state{owner_fsm = OwnerFsm, remote_site_name = RemoteSiteName}}.
 
 handle_call(stop, _From, State) ->
     case State#state.folder_pid of

@@ -8,6 +8,8 @@
 -export([start_link/0, enable/3, disable/2, enabled/0, enabled/1]).
 -export([init/1]).
 
+-include("riak_repl.hrl").
+
 -define(SHUTDOWN, 5000). % how long to give rtsource processes to persist queue/shutdown
 
 start_link() ->
@@ -37,6 +39,6 @@ enabled(Node) ->
 init([]) ->
     {ok, {{one_for_one, 10, 10}, []}}.
 
-make_childspec(Partition, IP) ->
-    {Partition, {riak_repl2_fssource, start_link, [Partition, IP]},
+make_childspec(Partition, Endpoint) ->
+    {Partition, {riak_repl2_fssource, start_link, [Partition, Endpoint]},
         temporary, ?SHUTDOWN, worker, [riak_repl2_fssource]}.

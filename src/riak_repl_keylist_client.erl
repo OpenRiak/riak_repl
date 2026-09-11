@@ -141,7 +141,7 @@ request_partition(continue, #state{partitions=[P|T], work_dir=WorkDir, socket=So
             KeyListFn = riak_repl_util:keylist_filename(WorkDir, P, ours),
             ?LOG_INFO("Full-sync with site ~p; building keylist for ~p, ~p remain",
                        [State#state.sitename, P, length(T)]),
-            {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
+            {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self(), State#state.sitename),
             {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
                                                                       P,
                                                                       KeyListFn),

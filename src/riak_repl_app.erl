@@ -61,6 +61,21 @@ start(_Type, _StartArgs) ->
         ],
         [consistent, datatype, n_val, allow_mult, last_write_wins]),
 
+    %% The type definition of the accumulator used in the 
+    %% vnode fold function used when building keylists has
+    %% changed to be more generic (using a record, to be
+    %% backwards compatible with Riak 2.0), instead of being
+    %% a raw tuple.  This capability defines the ability to
+    %% use a record-based accumulator, which is only suppported
+    %% when all nodes have been upgraded accordingly.
+    %% Once we no longer need to support OTP-16, we can move to
+    %% a map-based accumulator, for even more generality.
+    riak_core_capability:register(
+        {riak_repl, fs_kl_vnode_fold_accum_type},
+        [keylist_fold_rec, raw_tuple], 
+        raw_tuple
+    ),
+
     %% skip Riak CS blocks
     case riak_repl_util:proxy_get_active() of
         true ->

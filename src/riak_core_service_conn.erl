@@ -2,8 +2,12 @@
 -behavior(gen_fsm).
 
 
--compile({nowarn_deprecated_function, 
-            [{gen_fsm, enter_loop, 4}]}).
+-compile([{nowarn_deprecated_function,
+           [{gen_fsm, enter_loop, 4}
+           ]
+          },
+          nowarn_deprecated_callback
+         ]).
 
 -include("riak_core_connection.hrl").
 

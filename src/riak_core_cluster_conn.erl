@@ -27,11 +27,16 @@
 
 -behavior(gen_fsm).
 
--compile({nowarn_deprecated_function, 
-            [{gen_fsm, start_link, 3},
-                {gen_fsm, send_event, 2},
-                {gen_fsm, sync_send_event, 3},
-                {gen_fsm, sync_send_all_state_event, 2}]}).
+-compile([{nowarn_deprecated_function,
+           [{gen_fsm, start_link, 3},
+            {gen_fsm, start, 3},
+            {gen_fsm, send_event, 2},
+            {gen_fsm, sync_send_event, 3},
+            {gen_fsm, sync_send_all_state_event, 2}
+           ]
+          },
+          nowarn_deprecated_callback
+         ]).
 
 -include("riak_core_cluster.hrl").
 -include("riak_core_connection.hrl").

@@ -35,6 +35,18 @@
 -module(riak_core_connection).
 -behavior(gen_fsm).
 
+-compile([{nowarn_deprecated_function,
+           [{gen_fsm, code_change, 4},
+            {gen_fsm, handle_event, 3},
+            {gen_fsm, handle_info, 3},
+            {gen_fsm, handle_sync_event, 4},
+            {gen_fsm, init, 1},
+            {gen_fsm, terminate, 3}
+           ]
+          },
+          nowarn_deprecated_callback
+         ]).
+
 -include("riak_core_connection.hrl").
 
 -include_lib("kernel/include/logger.hrl").

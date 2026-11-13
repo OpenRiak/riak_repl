@@ -1,6 +1,15 @@
 %%-*- mode: erlang -*-
 %% Replication config
 
+%% @doc Enable or disable the riak_repl app cluster manager listener
+%% If riak_repl is not used, then the listener may be disabled to reduce the
+%% exposed ports in the cluster.  The listener cannot be re-enabled without a
+%% restart.
+{mapping, "mdc.cluster_listener", "riak_repl.cluster_listener", [
+    {datatype, flag},
+    {default, on}
+]}.
+
 %% @doc Path (relative or absolute) to the working directory for the
 %% replication process
 {mapping, "mdc.data_root", "riak_repl.data_root", [

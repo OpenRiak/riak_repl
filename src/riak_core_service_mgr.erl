@@ -507,22 +507,28 @@ normalize_ip(IP) when is_tuple(IP) ->
 %% acceptor function called as `Module:Function(Listener, Socket, Transport, Args)',
 %% which must create its own process and return `{ok, pid()}'.
 
--spec(start_dispatcher(ip_addr(), non_neg_integer(), [hostspec()]) -> {ok, pid()}).
+-spec(start_dispatcher(ip_addr(), non_neg_integer(), [hostspec()]) -> {ok, pid()|unknown}).
 start_dispatcher({IP,Port}, MaxListeners, SubProtocols) ->
-    {ok, RawAddress} = inet_parse:address(IP),
-    {ok, Pid} =
-        ranch:start_listener(
-            {IP, Port},
-            ranch_tcp,
-            #{
-                socket_opts => [{ip, RawAddress}, {port, Port}],
-                num_acceptors => MaxListeners
-            },
-            riak_core_service_conn,
-            SubProtocols
-        ),
-    ?LOG_INFO("Service manager: listening on ~s:~p", [IP, Port]),
-    {ok, Pid}.
+    case application:get_env(riak_repl, cluster_listener, true) of
+        true ->
+            {ok, RawAddress} = inet_parse:address(IP),
+            {ok, Pid} =
+                ranch:start_listener(
+                    {IP, Port},
+                    ranch_tcp,
+                    #{
+                        socket_opts => [{ip, RawAddress}, {port, Port}],
+                        num_acceptors => MaxListeners
+                    },
+                    riak_core_service_conn,
+                    SubProtocols
+                ),
+            ?LOG_INFO("Service manager: listening on ~s:~p", [IP, Port]),
+            {ok, Pid};
+        false ->
+            ?LOG_INFO("Service manager: listener disabled by config"),
+            {ok, unknown}
+    end.
 
 %% @doc Register a service, and store.
 handle_register_service(Protocol, Strategy, Services) ->
